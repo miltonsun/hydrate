@@ -443,6 +443,10 @@ export default function HydrateApp() {
   const [pwBusy, setPwBusy] = useState(false);
   const [showOldPw, setShowOldPw] = useState(false);
   const [showNewPw, setShowNewPw] = useState(false);
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [newUserTaken, setNewUserTaken] = useState(false);
+  const [checkingNewUser, setCheckingNewUser] = useState(false);
+  const [userChangeBusy, setUserChangeBusy] = useState(false);
 
   const [customAmt, setCustomAmt] = useState("");
   const [showCustom, setShowCustom] = useState(false);
@@ -468,6 +472,27 @@ export default function HydrateApp() {
       setCheckingUsername(false);
     }, 400);
   };
+
+  const newUserTimer = useRef(null);
+
+  const checkNewUsername = (val) => {
+    setNewUsername(val);
+    setNewUserTaken(false);
+    setUsernameMsg("");
+    clearTimeout(newUserTimer.current);
+    const name = val.trim().toLowerCase();
+    if (!name || name.length < 3 || !/^[a-z0-9_]{3,20}$/.test(name)) return;
+    if (name === username) return;
+    setCheckingNewUser(true);
+    newUserTimer.current = setTimeout(async () => {
+      const { data } = await supabase.from("profiles").select("username").eq("username", name).single();
+      setNewUserTaken(!!data);
+      setCheckingNewUser(false);
+    }, 400);
+  };
+
+  const openUserModal = () => { setShowUserModal(true); setNewUsername(""); setUsernameMsg(""); setNewUserTaken(false); setCheckingNewUser(false); };
+  const closeUserModal = () => { setShowUserModal(false); setUsernameMsg(""); };
 
   /* ---------- load profile from Supabase ---------- */
   const loadProfile = async (uid) => {
@@ -617,20 +642,22 @@ export default function HydrateApp() {
     setUsernameMsg("");
     if (!/^[a-z0-9_]{3,20}$/.test(name)) { setUsernameMsg("3\u201320 letters, numbers or underscores"); return; }
     if (name === username) { setUsernameMsg("that's already your username"); return; }
+    if (newUserTaken) { setUsernameMsg("that username is taken"); return; }
+    setUserChangeBusy(true);
+    // double-check availability
     const { data: existing } = await supabase.from("profiles").select("username").eq("username", name).single();
-    if (existing) { setUsernameMsg("that username is taken"); return; }
+    if (existing) { setUsernameMsg("that username is taken"); setNewUserTaken(true); setUserChangeBusy(false); return; }
     // IMPORTANT: delete old leaderboard row FIRST, while profile still has the old username
-    // (RLS checks username against profile, so order matters)
     const oldUsername = username;
     const now = new Date().toISOString();
     try { await supabase.from("leaderboard").delete().eq("username", oldUsername); } catch {}
     // now update profile username
     const { error: updateErr } = await supabase.from("profiles").update({ username: name, last_username_change: now }).eq("id", session.user.id);
-    if (updateErr) { setUsernameMsg("failed to update — try again"); return; }
+    if (updateErr) { setUsernameMsg("failed to update — try again"); setUserChangeBusy(false); return; }
     setUsername(name);
     setProfile({ ...profile, username: name, last_username_change: now });
-    setEditingUsername(false);
-    setUsernameMsg("");
+    setUsernameMsg("username changed!");
+    setUserChangeBusy(false);
     // push new leaderboard row with updated username
     await supabase.from("leaderboard").upsert({
       username: name,
@@ -639,6 +666,7 @@ export default function HydrateApp() {
       total_oz: computeTotalOz(history),
       updated_at: now,
     }, { onConflict: "username" });
+    setTimeout(() => closeUserModal(), 1500);
   };
 
   /* ---------- setup ---------- */
@@ -941,29 +969,14 @@ export default function HydrateApp() {
           {/* --- username --- */}
           <div style={S.card}>
             <label style={S.label}>username</label>
-            {editingUsername ? (
-              <>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input style={{ ...S.input, flex: 1 }} value={newUsername} autoCapitalize="none" placeholder="new username"
-                    onChange={(e) => setNewUsername(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleUsernameChange(); }} />
-                  <button onClick={handleUsernameChange} style={{ ...S.primary, width: "auto", marginTop: 0, padding: "0 18px" }}>save</button>
-                </div>
-                <button onClick={() => { setEditingUsername(false); setUsernameMsg(""); }}
-                  style={{ background: "none", border: "none", color: T.textSoft, fontSize: 12, cursor: "pointer", fontFamily: T.font, marginTop: 6 }}>cancel</button>
-                {usernameMsg && <p style={{ fontSize: 12, color: "#d64545", fontWeight: 600, margin: "6px 0 0" }}>{usernameMsg}</p>}
-              </>
-            ) : (
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 18, fontWeight: 800 }}>{username}</span>
-                {canChangeUsername() ? (
-                  <button onClick={() => { setEditingUsername(true); setNewUsername(username); }}
-                    style={{ ...S.ghost, padding: "6px 12px", fontSize: 12 }}>edit</button>
-                ) : (
-                  <span style={{ fontSize: 11, color: T.textSoft }}>can change in {daysUntilUsernameChange()} days</span>
-                )}
-              </div>
-            )}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 18, fontWeight: 800 }}>{username}</span>
+              {canChangeUsername() ? (
+                <button onClick={openUserModal} style={{ ...S.ghost, padding: "6px 12px", fontSize: 12 }}>edit</button>
+              ) : (
+                <span style={{ fontSize: 11, color: T.textSoft }}>can change in {daysUntilUsernameChange()} days</span>
+              )}
+            </div>
           </div>
 
           {/* --- stats --- */}
@@ -1059,6 +1072,56 @@ export default function HydrateApp() {
                 <button onClick={handleChangePassword} disabled={pwBusy} style={{
                   ...S.primary, opacity: pwBusy ? 0.5 : 1,
                 }}>{pwBusy ? "saving…" : "save changes"}</button>
+              </div>
+            </div>
+          )}
+
+          {/* --- change username modal --- */}
+          {showUserModal && (
+            <div style={{
+              position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex",
+              alignItems: "center", justifyContent: "center", zIndex: 100, padding: 20,
+            }} onClick={(e) => { if (e.target === e.currentTarget) closeUserModal(); }}>
+              <div style={{
+                background: "#fff", borderRadius: T.radius + 4, padding: 24, width: "100%",
+                maxWidth: 380, position: "relative", fontFamily: T.font,
+              }}>
+                <button onClick={closeUserModal} style={{
+                  position: "absolute", top: 12, right: 14, background: "none", border: "none",
+                  fontSize: 20, cursor: "pointer", color: T.textSoft, fontFamily: T.font, lineHeight: 1,
+                }}>×</button>
+                <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 6 }}>change username</div>
+                <p style={{ fontSize: 12, color: T.textSoft, marginBottom: 18 }}>
+                  you can only change your username once every 30 days
+                </p>
+
+                <label style={S.label}>current username</label>
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14, color: T.textSoft }}>{username}</div>
+
+                <label style={S.label}>new username</label>
+                <input style={{ ...S.input, borderColor: newUserTaken ? "#d64545" : undefined }}
+                  placeholder="e.g. waterqueen" value={newUsername} autoCapitalize="none"
+                  onChange={(e) => checkNewUsername(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !newUserTaken) handleUsernameChange(); }} />
+                {newUserTaken && (
+                  <p style={{ fontSize: 12, color: "#d64545", fontWeight: 700, margin: "6px 0 0" }}>username taken</p>
+                )}
+                {checkingNewUser && (
+                  <p style={{ fontSize: 12, color: T.textSoft, margin: "6px 0 0" }}>checking…</p>
+                )}
+                {newUsername.trim().length >= 3 && !newUserTaken && !checkingNewUser && newUsername.trim().toLowerCase() !== username && /^[a-z0-9_]{3,20}$/.test(newUsername.trim().toLowerCase()) && (
+                  <p style={{ fontSize: 12, color: T.outline, fontWeight: 600, margin: "6px 0 0" }}>available ✓</p>
+                )}
+
+                {usernameMsg && (
+                  <p style={{ fontSize: 13, fontWeight: 600, margin: "14px 0 0",
+                    color: usernameMsg === "username changed!" ? "#2d8a4e" : "#d64545",
+                  }}>{usernameMsg}</p>
+                )}
+
+                <button onClick={handleUsernameChange} disabled={userChangeBusy || newUserTaken} style={{
+                  ...S.primary, opacity: (userChangeBusy || newUserTaken || !newUsername.trim()) ? 0.5 : 1,
+                }}>{userChangeBusy ? "saving…" : "confirm change"}</button>
               </div>
             </div>
           )}
