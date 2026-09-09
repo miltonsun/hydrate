@@ -434,6 +434,15 @@ export default function HydrateApp() {
   const [editingUsername, setEditingUsername] = useState(false);
   const [newUsername, setNewUsername] = useState("");
   const [usernameMsg, setUsernameMsg] = useState("");
+  const [showPwModal, setShowPwModal] = useState(false);
+  const [oldPw, setOldPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [pwErr, setPwErr] = useState("");
+  const [pwSuccess, setPwSuccess] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [showOldPw, setShowOldPw] = useState(false);
+  const [showNewPw, setShowNewPw] = useState(false);
 
   const [customAmt, setCustomAmt] = useState("");
   const [showCustom, setShowCustom] = useState(false);
@@ -565,6 +574,27 @@ export default function HydrateApp() {
     setAvatarUrl(dataUrl);
     setEditingAvatar(false);
     await supabase.from("profiles").update({ avatar_url: dataUrl }).eq("id", session.user.id);
+  };
+
+  const openPwModal = () => { setShowPwModal(true); setOldPw(""); setNewPw(""); setConfirmPw(""); setPwErr(""); setPwSuccess(""); setShowOldPw(false); setShowNewPw(false); };
+  const closePwModal = () => { setShowPwModal(false); setPwErr(""); setPwSuccess(""); };
+
+  const handleChangePassword = async () => {
+    setPwErr(""); setPwSuccess("");
+    if (!oldPw) { setPwErr("enter your current password"); return; }
+    if (newPw.length < 6) { setPwErr("new password needs at least 6 characters"); return; }
+    if (newPw !== confirmPw) { setPwErr("new passwords don't match"); return; }
+    setPwBusy(true);
+    // verify old password by trying to sign in
+    const email = session.user.email;
+    const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password: oldPw });
+    if (signInErr) { setPwErr("incorrect password"); setPwBusy(false); return; }
+    // update to new password
+    const { error: updateErr } = await supabase.auth.updateUser({ password: newPw });
+    if (updateErr) { setPwErr(updateErr.message); setPwBusy(false); return; }
+    setPwSuccess("password updated!");
+    setPwBusy(false);
+    setTimeout(() => closePwModal(), 1500);
   };
 
   const canChangeUsername = () => {
@@ -966,9 +996,72 @@ export default function HydrateApp() {
           <button onClick={() => { setScreen("setup"); }} style={{ ...S.ghost, width: "100%", marginTop: 18 }}>
             hydration preferences
           </button>
+          <button onClick={openPwModal} style={{ ...S.ghost, width: "100%", marginTop: 8 }}>
+            change password
+          </button>
           <button onClick={signOut} style={{ ...S.ghost, width: "100%", marginTop: 8, color: "#d64545", borderColor: "#f0c0c0" }}>
             sign out
           </button>
+
+          {/* --- change password modal --- */}
+          {showPwModal && (
+            <div style={{
+              position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex",
+              alignItems: "center", justifyContent: "center", zIndex: 100, padding: 20,
+            }} onClick={(e) => { if (e.target === e.currentTarget) closePwModal(); }}>
+              <div style={{
+                background: "#fff", borderRadius: T.radius + 4, padding: 24, width: "100%",
+                maxWidth: 380, position: "relative", fontFamily: T.font,
+              }}>
+                <button onClick={closePwModal} style={{
+                  position: "absolute", top: 12, right: 14, background: "none", border: "none",
+                  fontSize: 20, cursor: "pointer", color: T.textSoft, fontFamily: T.font, lineHeight: 1,
+                }}>×</button>
+                <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 18 }}>change password</div>
+
+                <label style={S.label}>current password</label>
+                <div style={{ position: "relative", marginBottom: 14 }}>
+                  <input style={{ ...S.input, paddingRight: 44 }} type={showOldPw ? "text" : "password"}
+                    placeholder="your current password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} />
+                  <button onClick={() => setShowOldPw(!showOldPw)} type="button" style={{
+                    position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                    background: "none", border: "none", cursor: "pointer", padding: 4, color: T.textSoft,
+                  }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{showOldPw ? (<><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>) : (<><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>)}</svg></button>
+                </div>
+
+                <label style={S.label}>new password</label>
+                <div style={{ position: "relative", marginBottom: 14 }}>
+                  <input style={{ ...S.input, paddingRight: 44 }} type={showNewPw ? "text" : "password"}
+                    placeholder="at least 6 characters" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
+                  <button onClick={() => setShowNewPw(!showNewPw)} type="button" style={{
+                    position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                    background: "none", border: "none", cursor: "pointer", padding: 4, color: T.textSoft,
+                  }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{showNewPw ? (<><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>) : (<><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>)}</svg></button>
+                </div>
+
+                <label style={S.label}>confirm new password</label>
+                <div style={{ position: "relative" }}>
+                  <input style={{ ...S.input, paddingRight: 44 }} type={showNewPw ? "text" : "password"}
+                    placeholder="retype new password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleChangePassword(); }} />
+                  <button onClick={() => setShowNewPw(!showNewPw)} type="button" style={{
+                    position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                    background: "none", border: "none", cursor: "pointer", padding: 4, color: T.textSoft,
+                  }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{showNewPw ? (<><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>) : (<><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>)}</svg></button>
+                </div>
+                {confirmPw && newPw !== confirmPw && (
+                  <p style={{ fontSize: 12, color: "#d64545", fontWeight: 600, margin: "6px 0 0" }}>passwords don't match</p>
+                )}
+
+                {pwErr && <p style={{ fontSize: 13, color: "#d64545", fontWeight: 600, margin: "14px 0 0" }}>{pwErr}</p>}
+                {pwSuccess && <p style={{ fontSize: 13, color: "#2d8a4e", fontWeight: 600, margin: "14px 0 0" }}>{pwSuccess}</p>}
+
+                <button onClick={handleChangePassword} disabled={pwBusy} style={{
+                  ...S.primary, opacity: pwBusy ? 0.5 : 1,
+                }}>{pwBusy ? "saving…" : "save changes"}</button>
+              </div>
+            </div>
+          )}
         </div>
       ) : null}
     </div></div>
