@@ -589,15 +589,19 @@ export default function HydrateApp() {
     if (name === username) { setUsernameMsg("that's already your username"); return; }
     const { data: existing } = await supabase.from("profiles").select("username").eq("username", name).single();
     if (existing) { setUsernameMsg("that username is taken"); return; }
-    // update profile + leaderboard
+    // IMPORTANT: delete old leaderboard row FIRST, while profile still has the old username
+    // (RLS checks username against profile, so order matters)
+    const oldUsername = username;
     const now = new Date().toISOString();
-    await supabase.from("leaderboard").delete().eq("username", username);
-    await supabase.from("profiles").update({ username: name, last_username_change: now }).eq("id", session.user.id);
+    try { await supabase.from("leaderboard").delete().eq("username", oldUsername); } catch {}
+    // now update profile username
+    const { error: updateErr } = await supabase.from("profiles").update({ username: name, last_username_change: now }).eq("id", session.user.id);
+    if (updateErr) { setUsernameMsg("failed to update — try again"); return; }
     setUsername(name);
     setProfile({ ...profile, username: name, last_username_change: now });
     setEditingUsername(false);
     setUsernameMsg("");
-    // re-push leaderboard with new username
+    // push new leaderboard row with updated username
     await supabase.from("leaderboard").upsert({
       username: name,
       longest_streak: computeLongestStreak(history),
