@@ -546,7 +546,7 @@ export default function HydrateApp() {
     if (!name || name.length < 3 || !/^[a-z0-9_]{3,20}$/.test(name)) return;
     setCheckingUsername(true);
     usernameTimer.current = setTimeout(async () => {
-      const { data } = await supabase.from("profiles").select("username").eq("username", name).single();
+      const { data } = await supabase.rpc("is_username_taken", { check_username: name });
       setUsernameTaken(!!data);
       setCheckingUsername(false);
     }, 400);
@@ -564,7 +564,7 @@ export default function HydrateApp() {
     if (name === username) return;
     setCheckingNewUser(true);
     newUserTimer.current = setTimeout(async () => {
-      const { data } = await supabase.from("profiles").select("username").eq("username", name).single();
+      const { data } = await supabase.rpc("is_username_taken", { check_username: name });
       setNewUserTaken(!!data);
       setCheckingNewUser(false);
     }, 400);
@@ -654,7 +654,7 @@ export default function HydrateApp() {
       if (formPass.length < 6) { setAuthError("password needs at least 6 characters"); setAuthBusy(false); return; }
       if (formPass !== formConfirm) { setAuthError("passwords don't match"); setAuthBusy(false); return; }
       if (usernameTaken) { setAuthError("that username is taken"); setAuthBusy(false); return; }
-      const { data: existing } = await supabase.from("profiles").select("username").eq("username", name).single();
+      const { data: existing } = await supabase.rpc("is_username_taken", { check_username: name });
       if (existing) { setAuthError("that username is taken"); setAuthBusy(false); return; }
       const { data, error } = await supabase.auth.signUp({ email: formEmail.trim(), password: formPass });
       if (error) { setAuthError(error.message); setAuthBusy(false); return; }
@@ -727,7 +727,7 @@ export default function HydrateApp() {
     if (newUserTaken) { setUsernameMsg("that username is taken"); return; }
     setUserChangeBusy(true);
     // double-check availability
-    const { data: existing } = await supabase.from("profiles").select("username").eq("username", name).single();
+    const { data: existing } = await supabase.rpc("is_username_taken", { check_username: name });
     if (existing) { setUsernameMsg("that username is taken"); setNewUserTaken(true); setUserChangeBusy(false); return; }
     // IMPORTANT: delete old leaderboard row FIRST, while profile still has the old username
     const oldUsername = username;
