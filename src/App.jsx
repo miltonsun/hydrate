@@ -347,7 +347,7 @@ function Calendar({ history, viewYear, viewMonth, onPrev, onNext }) {
 /* ============================================================
    LEADERBOARD
    ============================================================ */
-function Board({ title, rows, valueKey, format, me }) {
+function Board({ title, rows, valueKey, format, me, unit, onViewProfile }) {
   const sorted = [...rows].sort((a, b) => (b[valueKey] || 0) - (a[valueKey] || 0)).slice(0, 10);
   const medal = ["🥇", "🥈", "🥉"];
   return (
@@ -372,7 +372,11 @@ function Board({ title, rows, valueKey, format, me }) {
                 <span style={{ fontSize: 14 }}>👤</span>
               )}
             </div>
-            <div style={{ flex: 1, fontWeight: isMe ? 800 : 600, fontSize: 14 }}>{r.username}{isMe ? " (you)" : ""}</div>
+            <button onClick={() => onViewProfile(r)} style={{
+              flex: 1, fontWeight: isMe ? 800 : 600, fontSize: 14, background: "none",
+              border: "none", textAlign: "left", cursor: "pointer", fontFamily: T.font,
+              color: T.text, padding: 0,
+            }}>{r.username}{isMe ? " (you)" : ""}</button>
             <div style={{ fontWeight: 800, fontStyle: "italic", fontSize: 15 }}>{format(r[valueKey] || 0)}</div>
           </div>
         );
@@ -381,8 +385,70 @@ function Board({ title, rows, valueKey, format, me }) {
   );
 }
 
+function ProfilePopup({ user, unit, onClose }) {
+  if (!user) return null;
+  const joined = user.created_at
+    ? new Date(user.created_at).toLocaleDateString(undefined, { month: "long", year: "numeric" })
+    : "unknown";
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex",
+      alignItems: "center", justifyContent: "center", zIndex: 100, padding: 20,
+    }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{
+        background: "#fff", borderRadius: T.radius + 4, padding: 28, width: "100%",
+        maxWidth: 340, position: "relative", fontFamily: T.font,
+      }}>
+        <button onClick={onClose} style={{
+          position: "absolute", top: 12, right: 14, background: "none", border: "none",
+          fontSize: 20, cursor: "pointer", color: T.textSoft, fontFamily: T.font, lineHeight: 1,
+        }}>×</button>
+
+        {/* header: avatar + name */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
+          <div style={{
+            width: 64, height: 64, borderRadius: "50%", overflow: "hidden", flexShrink: 0,
+            background: T.cell, display: "flex", alignItems: "center", justifyContent: "center",
+            border: `2px solid ${T.outline}`,
+          }}>
+            {user.avatar_url ? (
+              <img src={user.avatar_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            ) : (
+              <span style={{ fontSize: 28 }}>👤</span>
+            )}
+          </div>
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>{user.username}</div>
+            <div style={{ fontSize: 13, color: T.textSoft, marginTop: 2 }}>member since {joined}</div>
+          </div>
+        </div>
+
+        {/* stats */}
+        <div style={{
+          background: "#f2f2f2", borderRadius: T.radius, padding: 16,
+          display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, textAlign: "center",
+        }}>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 800, fontStyle: "italic", lineHeight: 1 }}>{user.currentStreak}🔥</div>
+            <div style={{ fontSize: 11, color: T.textSoft, marginTop: 4 }}>current streak</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 800, fontStyle: "italic", lineHeight: 1 }}>{user.longestStreak}</div>
+            <div style={{ fontSize: 11, color: T.textSoft, marginTop: 4 }}>best streak</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 800, fontStyle: "italic", lineHeight: 1 }}>{fmt(user.totalOz, unit)}</div>
+            <div style={{ fontSize: 11, color: T.textSoft, marginTop: 4 }}>total drank</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Leaderboard({ me, unit }) {
   const [rows, setRows] = useState(null);
+  const [viewUser, setViewUser] = useState(null);
   useEffect(() => {
     (async () => {
       const { data } = await supabase.from("leaderboard").select("*");
@@ -392,19 +458,21 @@ function Leaderboard({ me, unit }) {
         currentStreak: r.current_streak,
         totalOz: r.total_oz,
         avatar_url: r.avatar_url,
+        created_at: r.created_at,
       })));
     })();
   }, []);
   if (!rows) return <p style={{ fontSize: 14, color: T.textSoft, textAlign: "center", marginTop: 24 }}>loading…</p>;
   return (
     <>
-      <Board title="longest streak" rows={rows} valueKey="longestStreak" me={me}
-        format={(v) => `${v} day${v === 1 ? "" : "s"}`} />
-      <Board title="most water drank" rows={rows} valueKey="totalOz" me={me}
-        format={(v) => fmt(v, unit)} />
+      <Board title="longest streak" rows={rows} valueKey="longestStreak" me={me} unit={unit}
+        format={(v) => `${v} day${v === 1 ? "" : "s"}`} onViewProfile={setViewUser} />
+      <Board title="most water drank" rows={rows} valueKey="totalOz" me={me} unit={unit}
+        format={(v) => fmt(v, unit)} onViewProfile={setViewUser} />
       <p style={{ fontSize: 12, color: T.textSoft, textAlign: "center", marginTop: 14 }}>
-        your username, streak and total are visible to everyone on the board
+        tap a name to view their profile
       </p>
+      {viewUser && <ProfilePopup user={viewUser} unit={unit} onClose={() => setViewUser(null)} />}
     </>
   );
 }
@@ -555,6 +623,7 @@ export default function HydrateApp() {
       current_streak: computeStreak(h),
       total_oz: computeTotalOz(h),
       avatar_url: avatarUrl || null,
+      created_at: profile?.created_at || null,
       updated_at: new Date().toISOString(),
     }, { onConflict: "username" });
   };
@@ -678,6 +747,7 @@ export default function HydrateApp() {
       current_streak: computeStreak(history),
       total_oz: computeTotalOz(history),
       avatar_url: avatarUrl || null,
+      created_at: profile?.created_at || null,
       updated_at: now,
     }, { onConflict: "username" });
     setTimeout(() => closeUserModal(), 1500);
@@ -739,8 +809,9 @@ export default function HydrateApp() {
       background: on ? T.water : "#fff", color: T.text, fontWeight: on ? 700 : 500,
     }),
     tab: (on) => ({
-      flex: 1, padding: "10px 0", border: "none", borderRadius: 20, cursor: "pointer", fontFamily: T.font,
-      fontSize: 14, fontWeight: 700, background: on ? T.text : "transparent", color: on ? "#fff" : T.textSoft,
+      flex: 1, padding: "10px 2px", border: "none", borderRadius: 20, cursor: "pointer", fontFamily: T.font,
+      fontSize: 13, fontWeight: 700, background: on ? T.text : "transparent", color: on ? "#fff" : T.textSoft,
+      whiteSpace: "nowrap",
     }),
   };
 
@@ -885,7 +956,7 @@ export default function HydrateApp() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", background: "#f2f2f2", borderRadius: 24, padding: 4, marginTop: 20 }}>
         <button style={S.tab(tab === "today")} onClick={() => setTab("today")}>today</button>
         <button style={S.tab(tab === "calendar")} onClick={() => setTab("calendar")}>calendar</button>
-        <button style={S.tab(tab === "leaderboard")} onClick={() => setTab("leaderboard")}>board</button>
+        <button style={S.tab(tab === "leaderboard")} onClick={() => setTab("leaderboard")}>leaderboard</button>
         <button style={S.tab(tab === "profile")} onClick={() => setTab("profile")}>profile</button>
       </div>
 
