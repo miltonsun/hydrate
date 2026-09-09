@@ -362,6 +362,16 @@ function Board({ title, rows, valueKey, format, me }) {
             background: isMe ? T.water : "transparent", marginBottom: 4,
           }}>
             <div style={{ width: 26, textAlign: "center", fontWeight: 800, fontSize: 14 }}>{medal[i] || i + 1}</div>
+            <div style={{
+              width: 30, height: 30, borderRadius: "50%", overflow: "hidden", flexShrink: 0,
+              background: T.cell, display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              {r.avatar_url ? (
+                <img src={r.avatar_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              ) : (
+                <span style={{ fontSize: 14 }}>👤</span>
+              )}
+            </div>
             <div style={{ flex: 1, fontWeight: isMe ? 800 : 600, fontSize: 14 }}>{r.username}{isMe ? " (you)" : ""}</div>
             <div style={{ fontWeight: 800, fontStyle: "italic", fontSize: 15 }}>{format(r[valueKey] || 0)}</div>
           </div>
@@ -381,6 +391,7 @@ function Leaderboard({ me, unit }) {
         longestStreak: r.longest_streak,
         currentStreak: r.current_streak,
         totalOz: r.total_oz,
+        avatar_url: r.avatar_url,
       })));
     })();
   }, []);
@@ -543,6 +554,7 @@ export default function HydrateApp() {
       longest_streak: computeLongestStreak(h),
       current_streak: computeStreak(h),
       total_oz: computeTotalOz(h),
+      avatar_url: avatarUrl || null,
       updated_at: new Date().toISOString(),
     }, { onConflict: "username" });
   };
@@ -599,6 +611,7 @@ export default function HydrateApp() {
     setAvatarUrl(dataUrl);
     setEditingAvatar(false);
     await supabase.from("profiles").update({ avatar_url: dataUrl }).eq("id", session.user.id);
+    await supabase.from("leaderboard").update({ avatar_url: dataUrl }).eq("username", username);
   };
 
   const openPwModal = () => { setShowPwModal(true); setOldPw(""); setNewPw(""); setConfirmPw(""); setPwErr(""); setPwSuccess(""); setShowOldPw(false); setShowNewPw(false); };
@@ -664,6 +677,7 @@ export default function HydrateApp() {
       longest_streak: computeLongestStreak(history),
       current_streak: computeStreak(history),
       total_oz: computeTotalOz(history),
+      avatar_url: avatarUrl || null,
       updated_at: now,
     }, { onConflict: "username" });
     setTimeout(() => closeUserModal(), 1500);
@@ -868,10 +882,10 @@ export default function HydrateApp() {
         </div>
       </div>
 
-      <div style={{ display: "flex", background: "#f2f2f2", borderRadius: 24, padding: 4, marginTop: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", background: "#f2f2f2", borderRadius: 24, padding: 4, marginTop: 20 }}>
         <button style={S.tab(tab === "today")} onClick={() => setTab("today")}>today</button>
         <button style={S.tab(tab === "calendar")} onClick={() => setTab("calendar")}>calendar</button>
-        <button style={S.tab(tab === "leaderboard")} onClick={() => setTab("leaderboard")}>leaderboard</button>
+        <button style={S.tab(tab === "leaderboard")} onClick={() => setTab("leaderboard")}>board</button>
         <button style={S.tab(tab === "profile")} onClick={() => setTab("profile")}>profile</button>
       </div>
 
