@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "./supabase.js";
 
 /* ============================================================
@@ -68,6 +68,120 @@ function computeLongestStreak(history) {
 }
 
 const computeTotalOz = (history) => Object.values(history).reduce((s, e) => s + (e.consumed || 0), 0);
+
+/* ============================================================
+   AVATAR CROPPER — pick a photo, drag to position, crop circular
+   ============================================================ */
+function AvatarCropper({ onSave, onCancel }) {
+  const [img, setImg] = useState(null);
+  const [drag, setDrag] = useState(null);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [scale, setScale] = useState(1);
+  const canvasRef = useRef(null);
+  const SIZE = 200;
+
+  const handleFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const i = new Image();
+      i.onload = () => {
+        const s = SIZE / Math.min(i.width, i.height);
+        setScale(s);
+        setOffset({ x: (SIZE - i.width * s) / 2, y: (SIZE - i.height * s) / 2 });
+        setImg(i);
+      };
+      i.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const startDrag = (e) => {
+    e.preventDefault();
+    const pt = e.touches ? e.touches[0] : e;
+    setDrag({ sx: pt.clientX - offset.x, sy: pt.clientY - offset.y });
+  };
+  const onDrag = useCallback((e) => {
+    if (!drag) return;
+    const pt = e.touches ? e.touches[0] : e;
+    setOffset({ x: pt.clientX - drag.sx, y: pt.clientY - drag.sy });
+  }, [drag]);
+  const endDrag = () => setDrag(null);
+
+  useEffect(() => {
+    if (!drag) return;
+    window.addEventListener("mousemove", onDrag);
+    window.addEventListener("mouseup", endDrag);
+    window.addEventListener("touchmove", onDrag);
+    window.addEventListener("touchend", endDrag);
+    return () => { window.removeEventListener("mousemove", onDrag); window.removeEventListener("mouseup", endDrag); window.removeEventListener("touchmove", onDrag); window.removeEventListener("touchend", endDrag); };
+  }, [drag, onDrag]);
+
+  const handleZoom = (e) => {
+    if (!img) return;
+    const newScale = parseFloat(e.target.value);
+    const cx = SIZE / 2, cy = SIZE / 2;
+    setOffset({
+      x: cx - (cx - offset.x) * (newScale / scale),
+      y: cy - (cy - offset.y) * (newScale / scale),
+    });
+    setScale(newScale);
+  };
+
+  const crop = () => {
+    const c = canvasRef.current;
+    const ctx = c.getContext("2d");
+    c.width = SIZE; c.height = SIZE;
+    ctx.beginPath(); ctx.arc(SIZE / 2, SIZE / 2, SIZE / 2, 0, Math.PI * 2); ctx.clip();
+    ctx.drawImage(img, offset.x, offset.y, img.width * scale, img.height * scale);
+    onSave(c.toDataURL("image/jpeg", 0.85));
+  };
+
+  const minScale = img ? SIZE / Math.max(img.width, img.height) * 0.5 : 0.1;
+  const maxScale = img ? SIZE / Math.min(img.width, img.height) * 3 : 5;
+
+  return (
+    <div style={{ fontFamily: T.font }}>
+      {!img ? (
+        <label style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          width: SIZE, height: SIZE, margin: "0 auto", borderRadius: "50%",
+          border: `2px dashed ${T.cell}`, cursor: "pointer", color: T.textSoft, fontSize: 14,
+        }}>
+          tap to choose photo
+          <input type="file" accept="image/*" onChange={handleFile} style={{ display: "none" }} />
+        </label>
+      ) : (
+        <>
+          <div style={{
+            width: SIZE, height: SIZE, margin: "0 auto", borderRadius: "50%", overflow: "hidden",
+            position: "relative", cursor: "grab", touchAction: "none",
+            border: `3px solid ${T.outline}`,
+          }} onMouseDown={startDrag} onTouchStart={startDrag}>
+            <img src={img.src} alt="" draggable={false} style={{
+              position: "absolute", left: offset.x, top: offset.y,
+              width: img.width * scale, height: img.height * scale,
+              pointerEvents: "none", userSelect: "none",
+            }} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, justifyContent: "center" }}>
+            <span style={{ fontSize: 12, color: T.textSoft }}>-</span>
+            <input type="range" min={minScale} max={maxScale} step={0.005} value={scale} onChange={handleZoom}
+              style={{ width: 140, accentColor: T.outline }} />
+            <span style={{ fontSize: 12, color: T.textSoft }}>+</span>
+          </div>
+          <p style={{ fontSize: 12, color: T.textSoft, textAlign: "center", margin: "6px 0 0" }}>drag to reposition, slide to zoom</p>
+          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            <button onClick={onCancel} style={{ flex: 1, padding: 11, borderRadius: T.radius, border: `1.5px solid ${T.cell}`, background: "#fff", color: T.text, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: T.font }}>cancel</button>
+            <button onClick={crop} style={{ flex: 1, padding: 11, borderRadius: T.radius, border: "none", background: T.text, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>save</button>
+          </div>
+        </>
+      )}
+      <canvas ref={canvasRef} style={{ display: "none" }} />
+    </div>
+  );
+}
 
 /* ============================================================
    GLASS
@@ -290,10 +404,11 @@ function Leaderboard({ me, unit }) {
 export default function HydrateApp() {
   const [screen, setScreen] = useState("loading");
   const [tab, setTab] = useState("today");
-  const [session, setSession] = useState(null);          // Supabase auth session
+  const [session, setSession] = useState(null);
   const [username, setUsername] = useState("");
   const [profile, setProfile] = useState(null);
   const [history, setHistory] = useState({});
+  const [avatarUrl, setAvatarUrl] = useState(null);
 
   // auth form
   const [authMode, setAuthMode] = useState("signup");
@@ -302,6 +417,10 @@ export default function HydrateApp() {
   const [formPass, setFormPass] = useState("");
   const [authError, setAuthError] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [showPass, setShowPass] = useState(false);
+  const [formConfirm, setFormConfirm] = useState("");
+  const [usernameTaken, setUsernameTaken] = useState(false);
+  const [checkingUsername, setCheckingUsername] = useState(false);
 
   // setup form
   const [weight, setWeight] = useState("");
@@ -309,6 +428,12 @@ export default function HydrateApp() {
   const [gender, setGender] = useState("");
   const [unit, setUnit] = useState("oz");
   const [bottleSize, setBottleSize] = useState("");
+
+  // profile tab
+  const [editingAvatar, setEditingAvatar] = useState(false);
+  const [editingUsername, setEditingUsername] = useState(false);
+  const [newUsername, setNewUsername] = useState("");
+  const [usernameMsg, setUsernameMsg] = useState("");
 
   const [customAmt, setCustomAmt] = useState("");
   const [showCustom, setShowCustom] = useState(false);
@@ -318,6 +443,22 @@ export default function HydrateApp() {
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
   const inputRef = useRef(null);
+  const usernameTimer = useRef(null);
+
+  // live username availability check (debounced)
+  const checkUsername = (val) => {
+    setFormUser(val);
+    setUsernameTaken(false);
+    clearTimeout(usernameTimer.current);
+    const name = val.trim().toLowerCase();
+    if (!name || name.length < 3 || !/^[a-z0-9_]{3,20}$/.test(name)) return;
+    setCheckingUsername(true);
+    usernameTimer.current = setTimeout(async () => {
+      const { data } = await supabase.from("profiles").select("username").eq("username", name).single();
+      setUsernameTaken(!!data);
+      setCheckingUsername(false);
+    }, 400);
+  };
 
   /* ---------- load profile from Supabase ---------- */
   const loadProfile = async (uid) => {
@@ -329,6 +470,7 @@ export default function HydrateApp() {
       setWeight(data.weight); setWeightUnit(data.weight_unit);
       setGender(data.gender); setUnit(data.unit || "oz");
       setBottleSize(data.bottle_size || "");
+      setAvatarUrl(data.avatar_url || null);
       setScreen("app");
     } else {
       setScreen("setup");
@@ -355,6 +497,7 @@ export default function HydrateApp() {
   const percent = goal ? (consumed / goal) * 100 : 0;
   const remaining = Math.max(0, goal - consumed);
   const streak = computeStreak(history);
+  const longestStreak = computeLongestStreak(history);
 
   /* ---------- save history + push leaderboard ---------- */
   const saveHistory = async (h) => {
@@ -392,14 +535,14 @@ export default function HydrateApp() {
     setAuthError(""); setAuthBusy(true);
     if (authMode === "signup") {
       const name = formUser.trim().toLowerCase();
-      if (!/^[a-z0-9_]{3,20}$/.test(name)) { setAuthError("username: 3–20 letters, numbers or underscores"); setAuthBusy(false); return; }
+      if (!/^[a-z0-9_]{3,20}$/.test(name)) { setAuthError("username: 3\u201320 letters, numbers or underscores"); setAuthBusy(false); return; }
       if (formPass.length < 6) { setAuthError("password needs at least 6 characters"); setAuthBusy(false); return; }
-      // check username uniqueness
+      if (formPass !== formConfirm) { setAuthError("passwords don't match"); setAuthBusy(false); return; }
+      if (usernameTaken) { setAuthError("that username is taken"); setAuthBusy(false); return; }
       const { data: existing } = await supabase.from("profiles").select("username").eq("username", name).single();
       if (existing) { setAuthError("that username is taken"); setAuthBusy(false); return; }
       const { data, error } = await supabase.auth.signUp({ email: formEmail.trim(), password: formPass });
       if (error) { setAuthError(error.message); setAuthBusy(false); return; }
-      // create profile row
       await supabase.from("profiles").insert({ id: data.user.id, username: name });
       setSession(data.session); setUsername(name); setAuthBusy(false); setScreen("setup");
     } else {
@@ -415,6 +558,53 @@ export default function HydrateApp() {
     setSession(null); setProfile(null); setHistory({});
     setFormUser(""); setFormEmail(""); setFormPass("");
     setTab("today"); setScreen("auth");
+  };
+
+  /* ---------- profile actions ---------- */
+  const saveAvatar = async (dataUrl) => {
+    setAvatarUrl(dataUrl);
+    setEditingAvatar(false);
+    await supabase.from("profiles").update({ avatar_url: dataUrl }).eq("id", session.user.id);
+  };
+
+  const canChangeUsername = () => {
+    if (!profile?.last_username_change) return true;
+    const last = new Date(profile.last_username_change);
+    const diff = Date.now() - last.getTime();
+    return diff > 30 * 24 * 60 * 60 * 1000; // 30 days
+  };
+
+  const daysUntilUsernameChange = () => {
+    if (!profile?.last_username_change) return 0;
+    const last = new Date(profile.last_username_change);
+    const diff = 30 * 24 * 60 * 60 * 1000 - (Date.now() - last.getTime());
+    return Math.max(0, Math.ceil(diff / (24 * 60 * 60 * 1000)));
+  };
+
+  const handleUsernameChange = async () => {
+    const name = newUsername.trim().toLowerCase();
+    if (!name) return;
+    setUsernameMsg("");
+    if (!/^[a-z0-9_]{3,20}$/.test(name)) { setUsernameMsg("3\u201320 letters, numbers or underscores"); return; }
+    if (name === username) { setUsernameMsg("that's already your username"); return; }
+    const { data: existing } = await supabase.from("profiles").select("username").eq("username", name).single();
+    if (existing) { setUsernameMsg("that username is taken"); return; }
+    // update profile + leaderboard
+    const now = new Date().toISOString();
+    await supabase.from("leaderboard").delete().eq("username", username);
+    await supabase.from("profiles").update({ username: name, last_username_change: now }).eq("id", session.user.id);
+    setUsername(name);
+    setProfile({ ...profile, username: name, last_username_change: now });
+    setEditingUsername(false);
+    setUsernameMsg("");
+    // re-push leaderboard with new username
+    await supabase.from("leaderboard").upsert({
+      username: name,
+      longest_streak: computeLongestStreak(history),
+      current_streak: computeStreak(history),
+      total_oz: computeTotalOz(history),
+      updated_at: now,
+    }, { onConflict: "username" });
   };
 
   /* ---------- setup ---------- */
@@ -441,6 +631,11 @@ export default function HydrateApp() {
     if (v > 0) addWater(fromDisplay(v, unit));
     setCustomAmt(""); setShowCustom(false);
   };
+
+  // joined date
+  const joinedDate = profile?.created_at
+    ? new Date(profile.created_at).toLocaleDateString(undefined, { month: "long", year: "numeric" })
+    : "";
 
   /* ---------- shared styles ---------- */
   const S = {
@@ -496,21 +691,47 @@ export default function HydrateApp() {
           {signup && (
             <>
               <label style={S.label}>username</label>
-              <input style={S.input} placeholder="e.g. waterqueen" value={formUser} autoCapitalize="none"
-                onChange={(e) => setFormUser(e.target.value)} onKeyDown={onKey} />
+              <input style={{ ...S.input, borderColor: usernameTaken ? "#d64545" : undefined }} placeholder="e.g. waterqueen" value={formUser} autoCapitalize="none"
+                onChange={(e) => checkUsername(e.target.value)} onKeyDown={onKey} />
+              {usernameTaken && <p style={{ fontSize: 12, color: "#d64545", fontWeight: 700, margin: "6px 0 0" }}>username taken</p>}
+              {checkingUsername && <p style={{ fontSize: 12, color: T.textSoft, margin: "6px 0 0" }}>checking…</p>}
             </>
           )}
           <label style={{ ...S.label, marginTop: signup ? 14 : 0 }}>email</label>
           <input style={S.input} type="email" placeholder="you@example.com" value={formEmail}
             onChange={(e) => setFormEmail(e.target.value)} onKeyDown={onKey} />
           <label style={{ ...S.label, marginTop: 14 }}>password</label>
-          <input style={S.input} type="password" placeholder={signup ? "at least 6 characters" : "your password"} value={formPass}
-            onChange={(e) => setFormPass(e.target.value)} onKeyDown={onKey} />
+          <div style={{ position: "relative" }}>
+            <input style={{ ...S.input, paddingRight: 44 }} type={showPass ? "text" : "password"} placeholder={signup ? "at least 6 characters" : "your password"} value={formPass}
+              onChange={(e) => setFormPass(e.target.value)} onKeyDown={onKey} />
+            <button onClick={() => setShowPass(!showPass)} type="button" style={{
+              position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+              background: "none", border: "none", cursor: "pointer", padding: 4,
+              color: T.textSoft, fontFamily: T.font,
+            }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{showPass ? (<><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>) : (<><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>)}</svg></button>
+          </div>
+          {signup && (
+            <>
+              <label style={{ ...S.label, marginTop: 14 }}>confirm password</label>
+              <div style={{ position: "relative" }}>
+                <input style={{ ...S.input, paddingRight: 44 }} type={showPass ? "text" : "password"} placeholder="retype your password" value={formConfirm}
+                  onChange={(e) => setFormConfirm(e.target.value)} onKeyDown={onKey} />
+                <button onClick={() => setShowPass(!showPass)} type="button" style={{
+                  position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                  background: "none", border: "none", cursor: "pointer", padding: 4,
+                  color: T.textSoft, fontFamily: T.font,
+                }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{showPass ? (<><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>) : (<><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>)}</svg></button>
+              </div>
+              {formConfirm && formPass !== formConfirm && (
+                <p style={{ fontSize: 12, color: "#d64545", fontWeight: 600, margin: "6px 0 0" }}>passwords don't match</p>
+              )}
+            </>
+          )}
           {authError && <p style={{ fontSize: 13, color: "#d64545", margin: "10px 0 0", fontWeight: 600 }}>{authError}</p>}
         </div>
 
         <button style={{ ...S.primary, opacity: authBusy ? 0.5 : 1 }} onClick={handleAuth} disabled={authBusy}>
-          {authBusy ? "one sec…" : signup ? "create account" : "log in"}
+          {authBusy ? "one sec\u2026" : signup ? "create account" : "log in"}
         </button>
         <p style={{ ...S.soft, fontSize: 12, textAlign: "center", marginTop: 14 }}>
           {signup ? "already have an account? " : "new here? "}
@@ -589,6 +810,7 @@ export default function HydrateApp() {
         <button style={S.tab(tab === "today")} onClick={() => setTab("today")}>today</button>
         <button style={S.tab(tab === "calendar")} onClick={() => setTab("calendar")}>calendar</button>
         <button style={S.tab(tab === "leaderboard")} onClick={() => setTab("leaderboard")}>leaderboard</button>
+        <button style={S.tab(tab === "profile")} onClick={() => setTab("profile")}>profile</button>
       </div>
 
       {tab === "leaderboard" && (
@@ -603,7 +825,7 @@ export default function HydrateApp() {
             <Glass percent={percent} consumed={consumed} goal={goal} unit={unit} splashKey={splashKey} />
           </div>
           <p style={{ ...S.soft, textAlign: "center", marginTop: 14 }}>
-            {remaining > 0 ? `${fmt(remaining, unit)} to go` : "goal reached — nice work"}
+            {remaining > 0 ? `${fmt(remaining, unit)} to go` : "goal reached \u2014 nice work"}
           </p>
 
           <div style={S.card}>
@@ -645,11 +867,6 @@ export default function HydrateApp() {
               </div>
             </div>
           )}
-
-          <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
-            <button onClick={() => setScreen("setup")} style={{ ...S.ghost, flex: 1 }}>edit my profile</button>
-            <button onClick={signOut} style={{ ...S.ghost, flex: 1 }}>sign out</button>
-          </div>
         </>
       ) : tab === "calendar" ? (
         <div style={{ marginTop: 22 }}>
@@ -657,6 +874,97 @@ export default function HydrateApp() {
           <p style={{ ...S.soft, textAlign: "center", marginTop: 18 }}>
             {streak > 0 ? `${streak} day${streak === 1 ? "" : "s"} in a row hitting your goal` : "hit your goal today to start a streak"}
           </p>
+        </div>
+      ) : tab === "profile" ? (
+        <div style={{ marginTop: 22 }}>
+          {/* --- avatar --- */}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+            {editingAvatar ? (
+              <div style={{ width: "100%" }}>
+                <AvatarCropper onSave={saveAvatar} onCancel={() => setEditingAvatar(false)} />
+              </div>
+            ) : (
+              <>
+                <div onClick={() => setEditingAvatar(true)} style={{
+                  width: 120, height: 120, borderRadius: "50%", overflow: "hidden", cursor: "pointer",
+                  background: T.cell, display: "flex", alignItems: "center", justifyContent: "center",
+                  border: `3px solid ${T.outline}`,
+                }}>
+                  {avatarUrl ? (
+                    <img src={avatarUrl} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  ) : (
+                    <span style={{ fontSize: 40 }}>👤</span>
+                  )}
+                </div>
+                <button onClick={() => setEditingAvatar(true)} style={{
+                  background: "none", border: "none", color: T.outline, fontWeight: 700, cursor: "pointer",
+                  fontFamily: T.font, fontSize: 13, marginTop: 8,
+                }}>change photo</button>
+              </>
+            )}
+          </div>
+
+          {/* --- username --- */}
+          <div style={S.card}>
+            <label style={S.label}>username</label>
+            {editingUsername ? (
+              <>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input style={{ ...S.input, flex: 1 }} value={newUsername} autoCapitalize="none" placeholder="new username"
+                    onChange={(e) => setNewUsername(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleUsernameChange(); }} />
+                  <button onClick={handleUsernameChange} style={{ ...S.primary, width: "auto", marginTop: 0, padding: "0 18px" }}>save</button>
+                </div>
+                <button onClick={() => { setEditingUsername(false); setUsernameMsg(""); }}
+                  style={{ background: "none", border: "none", color: T.textSoft, fontSize: 12, cursor: "pointer", fontFamily: T.font, marginTop: 6 }}>cancel</button>
+                {usernameMsg && <p style={{ fontSize: 12, color: "#d64545", fontWeight: 600, margin: "6px 0 0" }}>{usernameMsg}</p>}
+              </>
+            ) : (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 18, fontWeight: 800 }}>{username}</span>
+                {canChangeUsername() ? (
+                  <button onClick={() => { setEditingUsername(true); setNewUsername(username); }}
+                    style={{ ...S.ghost, padding: "6px 12px", fontSize: 12 }}>edit</button>
+                ) : (
+                  <span style={{ fontSize: 11, color: T.textSoft }}>can change in {daysUntilUsernameChange()} days</span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* --- stats --- */}
+          <div style={S.card}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 32, fontWeight: 800, fontStyle: "italic", lineHeight: 1 }}>{streak}🔥</div>
+                <div style={{ fontSize: 12, color: T.textSoft, marginTop: 4 }}>current streak</div>
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 32, fontWeight: 800, fontStyle: "italic", lineHeight: 1 }}>{longestStreak}</div>
+                <div style={{ fontSize: 12, color: T.textSoft, marginTop: 4 }}>best streak</div>
+              </div>
+            </div>
+            <div style={{ textAlign: "center", marginTop: 14 }}>
+              <div style={{ fontSize: 22, fontWeight: 800, fontStyle: "italic" }}>{fmt(computeTotalOz(history), unit)}</div>
+              <div style={{ fontSize: 12, color: T.textSoft, marginTop: 2 }}>total water logged</div>
+            </div>
+          </div>
+
+          {/* --- joined --- */}
+          <div style={S.card}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>member since</span>
+              <span style={{ fontSize: 14, color: T.textSoft }}>{joinedDate}</span>
+            </div>
+          </div>
+
+          {/* --- actions --- */}
+          <button onClick={() => { setScreen("setup"); }} style={{ ...S.ghost, width: "100%", marginTop: 18 }}>
+            hydration preferences
+          </button>
+          <button onClick={signOut} style={{ ...S.ghost, width: "100%", marginTop: 8, color: "#d64545", borderColor: "#f0c0c0" }}>
+            sign out
+          </button>
         </div>
       ) : null}
     </div></div>
