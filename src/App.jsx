@@ -390,6 +390,15 @@ function ProfilePopup({ user, unit, onClose }) {
   const joined = user.created_at
     ? new Date(user.created_at).toLocaleDateString(undefined, { month: "long", year: "numeric" })
     : "unknown";
+  // if the user hasn't logged water since yesterday, their current streak is broken
+  let displayStreak = user.currentStreak || 0;
+  if (user.updated_at) {
+    const lastUpdate = new Date(user.updated_at);
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(0, 0, 0, 0);
+    if (lastUpdate < yesterday) displayStreak = 0;
+  }
   return (
     <div style={{
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex",
@@ -429,7 +438,7 @@ function ProfilePopup({ user, unit, onClose }) {
           display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, textAlign: "center",
         }}>
           <div>
-            <div style={{ fontSize: 22, fontWeight: 800, fontStyle: "italic", lineHeight: 1 }}>{user.currentStreak}🔥</div>
+            <div style={{ fontSize: 22, fontWeight: 800, fontStyle: "italic", lineHeight: 1 }}>{displayStreak}🔥</div>
             <div style={{ fontSize: 11, color: T.textSoft, marginTop: 4 }}>current streak</div>
           </div>
           <div>
@@ -459,15 +468,25 @@ function Leaderboard({ me, unit }) {
         totalOz: r.total_oz,
         avatar_url: r.avatar_url,
         created_at: r.created_at,
+        updated_at: r.updated_at,
       })));
     })();
   }, []);
   if (!rows) return <p style={{ fontSize: 14, color: T.textSoft, textAlign: "center", marginTop: 24 }}>loading…</p>;
+  // fix stale streaks: if a user hasn't logged since yesterday, their current streak is 0
+  const freshRows = rows.map((r) => {
+    if (!r.updated_at) return { ...r, currentStreak: 0 };
+    const lastUpdate = new Date(r.updated_at);
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(0, 0, 0, 0);
+    return lastUpdate < yesterday ? { ...r, currentStreak: 0 } : r;
+  });
   return (
     <>
-      <Board title="longest streak" rows={rows} valueKey="longestStreak" me={me} unit={unit}
+      <Board title="longest streak" rows={freshRows} valueKey="longestStreak" me={me} unit={unit}
         format={(v) => `${v} day${v === 1 ? "" : "s"}`} onViewProfile={setViewUser} />
-      <Board title="most water drank" rows={rows} valueKey="totalOz" me={me} unit={unit}
+      <Board title="most water drank" rows={freshRows} valueKey="totalOz" me={me} unit={unit}
         format={(v) => fmt(v, unit)} onViewProfile={setViewUser} />
       <p style={{ fontSize: 12, color: T.textSoft, textAlign: "center", marginTop: 14 }}>
         tap a name to view their profile
@@ -579,12 +598,23 @@ export default function HydrateApp() {
     if (data) {
       setUsername(data.username);
       setProfile(data);
-      setHistory(data.history || {});
+      const h = data.history || {};
+      setHistory(h);
       setWeight(data.weight); setWeightUnit(data.weight_unit);
       setGender(data.gender); setUnit(data.unit || "oz");
       setBottleSize(data.bottle_size || "");
       setAvatarUrl(data.avatar_url || null);
       setScreen("app");
+      // sync leaderboard on every login to keep totals and streaks accurate
+      await supabase.from("leaderboard").upsert({
+        username: data.username,
+        longest_streak: computeLongestStreak(h),
+        current_streak: computeStreak(h),
+        total_oz: computeTotalOz(h),
+        avatar_url: data.avatar_url || null,
+        created_at: data.created_at || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "username" });
     } else {
       setScreen("setup");
     }
